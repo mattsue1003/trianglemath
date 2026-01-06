@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>數字金字塔推理挑戰 - 樣式優化版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+        
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background-color: #f1f5f9;
+        }
+
+        /* A4 紙張標準尺寸 - 預覽用 */
+        .a4-page {
+            width: 793px;
+            height: 1122px;
+            background: white;
+            padding: 50px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+            flex-shrink: 0;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+
+        /* 擷取專用舞台 */
+        #clean-capture-stage {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 793px;
+            height: 1122px;
+            z-index: -100;
+            background: white;
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        .preview-shadow {
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.2);
+            margin-bottom: 50px;
+        }
+
+        /* 金字塔結構 */
+        .pyramid-block {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid #f1f5f9;
+            border-radius: 2rem;
+            padding: 20px;
+            background: white;
+            box-sizing: border-box;
+        }
+
+        .num-box {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 900;
+            border: 3px solid #0f172a;
+            border-radius: 0.85rem;
+            background: white;
+            box-sizing: border-box;
+            flex-shrink: 0;
+        }
+
+        /* 關鍵修改：題目（隱藏）格子的樣式 */
+        .num-box.hidden-cell {
+            background-color: #e2e8f0 !important; /* 保持灰色底色 */
+            border-style: dashed !important;    /* 虛線樣式 */
+            border-color: #000000 !important;    /* 黑色虛線 */
+            color: transparent !important;
+        }
+
+        .num-box.answer-visible {
+            background-color: #eef2ff !important;
+            border-color: #6366f1 !important;
+            color: #4f46e5 !important;
+        }
+
+        .progress-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(10px);
+            z-index: 9999;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 下載進度遮罩 -->
+    <div id="progressOverlay" class="progress-overlay">
+        <div class="bg-white text-slate-900 p-10 rounded-[2.5rem] max-w-sm w-full shadow-2xl flex flex-col items-center border-4 border-indigo-600">
+            <div class="animate-spin text-indigo-600 mb-6">
+                <i data-lucide="loader-2" size="48"></i>
+            </div>
+            <h2 class="text-xl font-black mb-2">正在精準擷取頁面...</h2>
+            <div class="w-full bg-slate-100 h-4 rounded-full overflow-hidden mt-4">
+                <div id="progressBar" class="bg-indigo-600 h-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+            <p id="progressStatus" class="text-xs text-slate-400 mt-4 font-black uppercase tracking-widest">初始化中</p>
+            <p class="text-[10px] text-rose-500 mt-3 font-bold px-4 text-center">正在處理高品質 PDF，請稍候...</p>
+        </div>
+    </div>
+
+    <!-- 擷取舞台 -->
+    <div id="clean-capture-stage"></div>
+
+    <div class="max-w-5xl mx-auto p-4 md:p-8">
+        <!-- 控制面板 -->
+        <div class="bg-white rounded-[3rem] shadow-2xl p-6 md:p-10 mb-12 border border-white sticky top-4 z-50">
+            <header class="flex flex-col md:flex-row items-center justify-between gap-6 mb-8 border-b border-slate-50 pb-6">
+                <div class="flex items-center gap-5">
+                    <div class="w-14 h-14 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg text-white">
+                        <i data-lucide="edit-3" size="28"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-black text-slate-800">數字金字塔挑戰</h1>
+                        <p class="text-slate-400 text-xs font-bold uppercase tracking-widest italic">工作表生成器</p>
+                    </div>
+                </div>
+            </header>
+
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div class="lg:col-span-8 space-y-4">
+                    <input type="text" id="inputTitle" value="數字金字塔推理挑戰" 
+                        class="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold outline-none focus:border-indigo-500 focus:bg-white transition-all">
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <select id="selectDifficulty" class="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold">
+                            <option value="easy">簡易 (3層)</option>
+                            <option value="normal" selected>普通 (4層)</option>
+                            <option value="hard">挑戰 (5層)</option>
+                            <option value="expert">專家 (6層)</option>
+                        </select>
+                        <input type="number" id="inputQuantity" min="1" max="10" value="1" class="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold">
+                        <select id="selectAnswerMode" class="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold">
+                            <option value="none">不提供解答</option>
+                            <option value="nextPage">題目下一頁提供</option>
+                            <option value="end">全部置於最後</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="lg:col-span-4 flex flex-col gap-3">
+                    <button id="btnRefresh" class="bg-white text-indigo-600 border-2 border-indigo-100 font-bold py-3 rounded-2xl hover:bg-indigo-50 transition-colors flex items-center justify-center gap-2">
+                        <i data-lucide="refresh-cw" size="18"></i> 刷新內容
+                    </button>
+                    <button id="btnToggleAns" class="bg-slate-50 text-slate-500 font-bold py-3 rounded-2xl border-2 border-transparent hover:bg-slate-100 transition-all flex items-center justify-center gap-2">
+                        <i data-lucide="eye" size="18"></i> <span>預覽解答</span>
+                    </button>
+                    <button id="btnDownload" class="bg-indigo-600 text-white font-black py-4 rounded-2xl shadow-xl hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 text-lg">
+                        <i data-lucide="download-cloud" size="22"></i> 下載 PDF
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 預覽區 -->
+        <div id="previewArea" class="flex flex-col items-center gap-4 transition-all duration-500 origin-top scale-[0.6] sm:scale-[0.8] md:scale-90 lg:scale-100">
+            <!-- 由 JS 動態生成 -->
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        const config = {
+            easy: { rows: 3, maxBase: 10, hideRatio: 0.45, label: '簡易 (3層)' },
+            normal: { rows: 4, maxBase: 15, hideRatio: 0.55, label: '普通 (4層)' },
+            hard: { rows: 5, maxBase: 20, hideRatio: 0.65, label: '挑戰 (5層)' },
+            expert: { rows: 6, maxBase: 25, hideRatio: 0.7, label: '專家 (6層)' }
+        };
+
+        let currentPuzzles = [];
+        let showAnswersPreview = false;
+
+        function generatePyramidData(diffKey) {
+            const { rows, maxBase, hideRatio } = config[diffKey];
+            let bottomRow = [];
+            for (let i = 0; i < rows; i++) bottomRow.push(Math.floor(Math.random() * maxBase) + 1);
+            let fullData = [bottomRow];
+            let current = bottomRow;
+            while (current.length > 1) {
+                let next = [];
+                for (let i = 0; i < current.length - 1; i++) next.push(current[i] + current[i + 1]);
+                fullData.push(next);
+                current = next;
+            }
+            const reversedData = fullData.reverse();
+            return {
+                data: reversedData,
+                mask: reversedData.map(row => row.map(() => Math.random() < hideRatio))
+            };
+        }
+
+        function createPyramidHTML(puzzle, forceShowAns) {
+            const rows = puzzle.data.length;
+            const sizeClass = rows >= 6 ? 'w-10 h-10 text-xl' : rows >= 5 ? 'w-14 h-14 text-2xl' : 'w-16 h-16 text-3xl';
+            const isAns = forceShowAns || showAnswersPreview;
+            
+            let html = `<div class="pyramid-block">`;
+            puzzle.data.forEach((row, rIdx) => {
+                html += `<div class="flex justify-center -mt-1.5">`;
+                row.forEach((val, cIdx) => {
+                    const isHidden = puzzle.mask[rIdx][cIdx];
+                    const cellClass = (isHidden && !isAns) ? 'hidden-cell' : '';
+                    const ansClass = (isAns && isHidden) ? 'answer-visible' : '';
+                    html += `<div class="num-box ${sizeClass} m-1 ${cellClass} ${ansClass}">${(isHidden && !isAns) ? '' : val}</div>`;
+                });
+                html += `</div>`;
+            });
+            html += `</div>`;
+            return html;
+        }
+
+        function createPageHTML(puzzles, pageNum, isAnsPage) {
+            const title = document.getElementById('inputTitle').value;
+            const diffLabel = config[document.getElementById('selectDifficulty').value].label;
+            
+            return `
+                <div class="a4-page" data-page-id="${pageNum}">
+                    <div class="flex justify-between items-end mb-10 border-b-[5px] border-slate-900 pb-5">
+                        <div class="flex-1">
+                            <h2 class="text-4xl font-black text-slate-900">
+                                ${title} ${isAnsPage ? '<span class="text-xl bg-indigo-600 text-white px-4 py-1 rounded-full ml-3">解答頁</span>' : ''}
+                            </h2>
+                            <div class="flex gap-x-8 mt-5 text-base font-black text-slate-500">
+                                <span>難度：${diffLabel}</span>
+                                <span>姓名：____________________</span>
+                            </div>
+                        </div>
+                        <div class="text-right text-sm font-black text-slate-300">P.${pageNum}</div>
+                    </div>
+                    <div class="grid grid-cols-2 grid-rows-2 gap-10 flex-1">
+                        ${puzzles.map(p => createPyramidHTML(p, isAnsPage)).join('')}
+                    </div>
+                    <div class="mt-10 pt-6 border-t border-slate-100 flex justify-between items-center text-[10px] text-slate-400 font-black uppercase tracking-[0.2em]">
+                        <span>Designed by 鍾孟修 職能治療師</span>
+                        <span>愛迪樂健康促進團隊</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function refreshApp() {
+            const diff = document.getElementById('selectDifficulty').value;
+            const qty = parseInt(document.getElementById('inputQuantity').value) || 1;
+            currentPuzzles = [];
+            for (let i = 0; i < qty * 4; i++) currentPuzzles.push(generatePyramidData(diff));
+            renderPreview();
+        }
+
+        function renderPreview() {
+            const container = document.getElementById('previewArea');
+            const ansMode = document.getElementById('selectAnswerMode').value;
+            let html = '';
+            const chunks = [];
+            for (let i = 0; i < currentPuzzles.length; i += 4) chunks.push(currentPuzzles.slice(i, i + 4));
+
+            chunks.forEach((group, idx) => {
+                const pageNum = ansMode === 'nextPage' ? idx * 2 + 1 : idx + 1;
+                html += `<div class="preview-shadow page-node" data-idx="${idx}" data-ans="false">` + createPageHTML(group, pageNum, false) + `</div>`;
+                if (ansMode === 'nextPage') {
+                    html += `<div class="preview-shadow page-node" data-idx="${idx}" data-ans="true">` + createPageHTML(group, idx * 2 + 2, true) + `</div>`;
+                }
+            });
+
+            if (ansMode === 'end') {
+                chunks.forEach((group, idx) => {
+                    html += `<div class="preview-shadow page-node" data-idx="${idx}" data-ans="true">` + createPageHTML(group, chunks.length + idx + 1, true) + `</div>`;
+                });
+            }
+            container.innerHTML = html;
+        }
+
+        async function downloadPDF() {
+            const overlay = document.getElementById('progressOverlay');
+            const bar = document.getElementById('progressBar');
+            const status = document.getElementById('progressStatus');
+            const stage = document.getElementById('clean-capture-stage');
+            const pageNodes = document.querySelectorAll('.page-node');
+            
+            if (pageNodes.length === 0) return;
+
+            overlay.style.display = 'flex';
+            
+            try {
+                const { jsPDF } = window.jspdf;
+                const pdf = new jsPDF('p', 'mm', 'a4', true);
+
+                for (let i = 0; i < pageNodes.length; i++) {
+                    const progress = Math.round((i / pageNodes.length) * 100);
+                    bar.style.width = `${progress}%`;
+                    status.innerText = `正在擷取第 ${i + 1} / ${pageNodes.length} 頁`;
+
+                    stage.innerHTML = '';
+                    stage.style.visibility = 'visible';
+                    
+                    const pageHtml = pageNodes[i].querySelector('.a4-page').outerHTML;
+                    stage.innerHTML = pageHtml;
+
+                    const captureTarget = stage.querySelector('.a4-page');
+                    captureTarget.style.transform = 'none';
+                    captureTarget.style.margin = '0';
+                    captureTarget.style.position = 'relative';
+                    captureTarget.style.top = '0';
+                    captureTarget.style.left = '0';
+
+                    await new Promise(r => requestAnimationFrame(() => setTimeout(r, 150)));
+
+                    const canvas = await html2canvas(captureTarget, {
+                        scale: 2, 
+                        useCORS: true,
+                        backgroundColor: '#ffffff',
+                        logging: false,
+                        width: 793,
+                        height: 1122,
+                        scrollX: 0,
+                        scrollY: 0,
+                        windowWidth: 793,
+                        windowHeight: 1122
+                    });
+
+                    const imgData = canvas.toDataURL('image/jpeg', 0.9);
+                    if (i > 0) pdf.addPage();
+                    pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297);
+                    
+                    stage.innerHTML = '';
+                    stage.style.visibility = 'hidden';
+                    canvas.width = 0;
+                    canvas.height = 0;
+                }
+
+                bar.style.width = '100%';
+                status.innerText = '完成！正在存檔...';
+                pdf.save(`${document.getElementById('inputTitle').value}.pdf`);
+
+            } catch (err) {
+                console.error(err);
+                alert("下載失敗，請嘗試刷新頁面。");
+            } finally {
+                setTimeout(() => {
+                    overlay.style.display = 'none';
+                    bar.style.width = '0%';
+                }, 1000);
+            }
+        }
+
+        document.getElementById('btnRefresh').addEventListener('click', refreshApp);
+        document.getElementById('btnDownload').addEventListener('click', downloadPDF);
+        document.getElementById('btnToggleAns').addEventListener('click', () => {
+            showAnswersPreview = !showAnswersPreview;
+            const btn = document.getElementById('btnToggleAns');
+            btn.classList.toggle('bg-indigo-600', showAnswersPreview);
+            btn.classList.toggle('text-white', showAnswersPreview);
+            btn.querySelector('span').innerText = showAnswersPreview ? '隱藏解答' : '預覽解答';
+            renderPreview();
+        });
+
+        ['inputTitle', 'selectDifficulty', 'inputQuantity', 'selectAnswerMode'].forEach(id => {
+            document.getElementById(id).addEventListener('change', refreshApp);
+        });
+
+        window.onload = refreshApp;
+    </script>
+</body>
+</html>
